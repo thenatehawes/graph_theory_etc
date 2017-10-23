@@ -23,7 +23,6 @@ flux = net('flux')
 i_L = net('i_L')
 
 print(v_s)
-print(source.output_port_list)
 
 connection_option = True
 
@@ -53,10 +52,8 @@ else:
     i_L.make_connection(input_port=resistance.input_port_list[0])
     v_r.make_connection(output_port=resistance.output_port_list[0])
 
-print(v_r)
-# print(v_s.output_port.connected_net.name)
-# print(fport)
-a = False
-if 'asdf' == 'asdf':
-    a = True
-print(a)
+print(v_s)
+
+loop = source.find_loops_downstream()
+
+print(loop)
