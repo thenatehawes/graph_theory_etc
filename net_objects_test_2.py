@@ -68,6 +68,3 @@ paths = source.find_paths(termination)
 loops_touch = loops[0].touch_check(loops[1])
 print('Loop touch check is', loops_touch)
 print(loops[0])
-
-myarray = numpy.array([1,2,3])
-print(myarray)
