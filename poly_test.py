@@ -50,6 +50,14 @@ p8 = poly([(2 + 1j*20), 1])
 p9 = p8 * poly([(2 - 1j*20), 1])
 p10 = p7 * p9
 
+p11 = poly([(25 + 1j*30), 1]) * poly([(25 - 1j*30), 1]) * poly([125, 1]) * poly([5, 1])
+(output, remainder) = p11.synthetic_division(poly([(25 + 1j*30), 1]))
+print('Remainder from imagniary division:', remainder)
+
+result = p10.comp_horner(2 + 3j)
+result2 = p10.evaluate(2 + 3j)
+print('evaluate result', result2)
+print('comp horner result:', result)
 # a = -8
 # print('a', a**(1/3))
 

@@ -1,5 +1,5 @@
 from cmath import *
-
+from solvers import *
 
 class poly(object):
 
@@ -58,9 +58,10 @@ class poly(object):
 
         return output
 
-    def find_roots(self, rel_tol=1E-7, sig_figs=7, verbose=False):
+    def find_roots(self, rel_tol=1E-7, sig_figs=7, verbose=False, max_iter=50):
         root_list = []
         poly_obj = self
+        skip_order3 = False
 
         while True:
 
@@ -79,17 +80,22 @@ class poly(object):
                 root_list.append(output_list[1])
                 break
 
-            # elif (poly_obj.order == 3): # cube root problem!!!!
-            #     # Direct solve w/ cubic equation
-            #     if verbose:
-            #        print('Analytic 3rd order solution')
-            #     print(poly_obj.coeff_list)
-            #     output_list = cubic_eqn(poly_obj.coeff_list)
-            #     print(output_list)
-            #     root_list.append(output_list[0])
-            #     root_list.append(output_list[1])
-            #     root_list.append(output_list[2])
-            #     break
+            elif (poly_obj.order == 3) and not skip_order3: # cube root problem!!!!
+                # Direct solve w/ cubic equation
+                if verbose:
+                   print('Analytic 3rd order solution')
+                # print(poly_obj.coeff_list)
+                try:
+                    output_list = cubic_eqn(poly_obj.coeff_list)
+                    root_list.append(output_list[0])
+                    root_list.append(output_list[1])
+                    root_list.append(output_list[2])
+                    break
+                except ValueError:
+                    print('Imag coefficients, skipping order 3 analytic')
+                    skip_order3 = True
+
+                # print(output_list)
 
             # elif (poly_obj.order == 4):
             # Quartic eqn has a problem, i'll fix it later
@@ -103,15 +109,13 @@ class poly(object):
                 # Order is > 5, Find a root (or a complex pair)
                 if verbose:
                     print('Starting Muller Coarse Solver')
-                (root, cflag, n) = poly_obj.muller(initial_guess=(0 + 1j, 1 + 1j, 2+1j), tol=1E0, verbose=verbose)
+                (root, cflag, n) = poly_obj.muller(initial_guess=(0 + 1j, 1 + 1j, 2+1j), max_iter=75, tol=1E0, verbose=verbose)
                 if verbose:
                     print('Starting NR Solver w/ initial point', root)
-                (root, cflag, n) = poly_obj.newton_raphson(initial_guess=root, tol=rel_tol, verbose=verbose)
+                (root, cflag, n) = poly_obj.newton_raphson(initial_guess=root, tol=rel_tol, verbose=verbose, max_iter=max_iter)
                 
-                if verbose:
-                    print('Root found', root)
                 root_list.append(root)
-                if (abs(root.imag) > 1E-6*abs(root.real)):
+                if (abs(root.imag) > 1E-6*abs(root.real) and abs(root.imag) > rel_tol):
                     if verbose:
                         print('Assuming complex pair found:', root.conjugate())
                     root_list.append(root.conjugate())
@@ -142,8 +146,27 @@ class poly(object):
                 else:
                     poly_obj = deflated_poly
 
+        # Clean up roots one last time w/ NR
+        if verbose:
+            print('Final clean-up of roots with NR')
+
+        for i in range(len(root_list)):
+            if verbose:
+                    print('Starting NR Solver w/ initial point', root_list[i])
+            (root, cflag, n) = self.newton_raphson(initial_guess=root_list[i], tol=rel_tol, verbose=verbose)
+            if cflag:
+                root_list[i] = root
+
         for i in range(len(root_list)):
             root_list[i] = round_to_sigfigs(root_list[i], sig_figs)
+
+            realpart = root_list[i].real
+            imagpart = root_list[i].imag
+            if abs(realpart) < rel_tol:
+                realpart = 0.0
+            if abs(imagpart) < rel_tol:
+                imagpart = 0.0
+            root_list[i] = realpart + 1j*imagpart
 
         return root_list
 
@@ -161,7 +184,11 @@ class poly(object):
         while True:
             count += 1
 
-            delta_value = self.evaluate(value[count - 1]) / poly_derivative.evaluate(value[count - 1])
+            try:
+                delta_value = self.evaluate(value[count - 1]) / poly_derivative.evaluate(value[count - 1])
+            except ZeroDivisionError:
+                delta_value = 0
+
             value[count] = value[count - 1] - delta_value
 
             if verbose:
@@ -173,6 +200,12 @@ class poly(object):
             elif (count == max_iter):
                 cflag = False
                 break
+
+        if verbose and not cflag:
+            print('NR Solver did not converge to rel tol', tol)
+            print('Final step delta relative tol', delta_value)
+        elif verbose:
+            print('NR Solver root found', value[count], 'with rel tol', delta_value)
 
         return (value[count], cflag, count)
 
@@ -217,7 +250,13 @@ class poly(object):
                 break
             elif (count == max_iter):
                 break
-     
+        
+        if verbose and not cflag:
+            print('M Solver did not converge to rel tol', tol)
+            print('Final step delta relative tol', delta_value)
+        elif verbose:
+            print('M Solver root found', value[count], 'with rel tol', delta_value)
+
         return (value[count], cflag, count)
 
 
@@ -238,26 +277,82 @@ class poly(object):
 
         return diff
 
-    def synthetic_division(self, other):
+    def horner(self, x):
+
+        n = self.order
+
+        output_list = [0] * (n + 1)
+        output_list[n] = self.coeff_list[n]
+
+        for i in range(n-1, -1, -1):  # this makes coeff in range 0 < i <= n-1
+            
+            output_list[i] = output_list[i+1] * x + self.coeff_list[i]
+            
+        remainder = output_list[0]
+        poly_list = output_list[1:len(output_list)]
+
+        return (remainder, poly_list)
+
+    def synthetic_division(self, other, direction='forward'):
         if (other.order != 1):
             return
+
+        n = self.order
 
         divisor = -other.coeff_list[0]
         # print('divisor:', divisor)
 
-        output_list = [0] * (self.order + 1)
-        output_list[-1] = self.coeff_list[-1]
+        output_list = [0] * (n + 1)
+        if direction == 'forward':
 
-        for i in range(len(output_list)-2, 0, -1):
-            # print('self.coeff_list[i+1]', self.coeff_list[i+1])
-            output_list[i] = output_list[i+1] * divisor + self.coeff_list[i]
-            # print('i:', i, 'output_list:', output_list)
+            output_list[n] = self.coeff_list[n]
 
-        remainder = output_list[0]
-        poly_list = output_list[1:len(output_list)]
+            for i in range(1, n+1):  # this makes coeff in range 0 < i <= n-1
+                # print(i)
+                # print('self.coeff_list[i+1]', self.coeff_list[i+1])
+                
+                input1 = output_list[1+n-i] * divisor
+                input2 = self.coeff_list[n-i]
+               
+                # if (input1 + input2 == input1) or (input1 + input2 == input1):
+                #     print('Double insufficient')
 
-        output = poly(poly_list)
+                output_list[n-i] = input1 + input2
+                # print('i:', i, 'output_list:', output_list)
+                # print('n-i:', n-i)
+            remainder = output_list[0]
+            poly_list = output_list[1:len(output_list)]
+
+            output = poly(poly_list)
+
+        elif direction == 'backward':
+
+            output_list[0] = -self.coeff_list[0] / divisor
+
+            for k in range(1, len(self.coeff_list)):
+                output_list[k] = (output_list[k-1] - self.coeff_list[k]) / divisor
+
+            remainder = output_list[len(output_list) - 1]
+            poly_list = output_list[0 : len(output_list) - 2]
+
+            output = poly(poly_list)
+            output = False
         return (output, remainder)
+
+    def root_heuristic(self):
+
+        poly_list = self.coeff_list
+
+        a0 = poly_list[0]
+        a1 = poly_list[1]
+        an = poly_list[-1]
+        n = self.order
+        amax = max(abs(poly_list))
+
+        r_1 = min( (n*abs(a0 / a1)), (abs(a0 / an))**(1/n) )
+        r_2 = 1 + (amax/an)
+
+        return (r_1, r_2)
 
 def add_lists(list_1, list_2):
 
@@ -322,23 +417,40 @@ def quadratic_eqn(input_list):
     return output_list
 
 
-def cubic_eqn(input_list):
+def cubic_eqn(input_list, tol=1E-7):
     a2 = input_list[2] / input_list[3]
     a1 = input_list[1] / input_list[3]
     a0 = input_list[0] / input_list[3]
+
+    if a2.imag > tol or a1.imag > tol or a0.imag > tol:
+        print('Warning cubic eqn has imaginary coefficents')
+        print('Ignoring imaginary parts, this may mean an incorrect answer')
+        a2 = a2.real
+        a1 = a1.real
+        a0 = a0.real
 
     Q = (3*a1 - a2**2)/9
     R = (9*a2*a1 - 27*a0 - 2*a2**3)/54
 
     D = Q**3 + R**2
-    S = cube_root(R + sqrt(D))
-    T = cube_root(R - sqrt(D))
+
+    if D.real < 0:
+
+        theta = acos(R/sqrt(-Q**3))
+
+        r1 = 2*sqrt(-Q) * cos( (theta) / 3) - a2/3
+        r2 = 2*sqrt(-Q) * cos( (theta + 2*pi) / 3) - a2/3
+        r3 = 2*sqrt(-Q) * cos( (theta + 4*pi) / 3) - a2/3
+
+    else:
+        S = cube_root(R + sqrt(D))
+        T = cube_root(R - sqrt(D))
 
     # -math.pow(3, float(1)/3)
 
-    r1 = S + T - a2/3
-    r2 = -0.5*(S + T) + 0.5*1j*sqrt(3)*(S-T) - a2/3
-    r3 = -0.5*(S + T) - 0.5*1j*sqrt(3)*(S-T) - a2/3
+        r1 = S + T - a2/3
+        r2 = -0.5*(S + T) + 0.5*1j*sqrt(3)*(S-T) - a2/3
+        r3 = -0.5*(S + T) - 0.5*1j*sqrt(3)*(S-T) - a2/3
 
     output_list = []
     output_list.append(r1)
@@ -347,13 +459,13 @@ def cubic_eqn(input_list):
 
     return output_list
 
-# def cube_root(x):
-#     if (x.imag > 0):
-#         print(x)
-#     if x >= 0:
-#         return x**(1/3)
-#     elif x < 0:
-#         return -(abs(x)**(1/3))
+def cube_root(x, tol=1E-7):
+    if (x.imag > tol):
+        raise ValueError('Cube root of imaginary number', x.imag)
+    if x.real >= 0:
+        return abs(x)**(1/3)
+    elif x.real < 0:
+        return -(abs(x)**(1/3))
 
         # elif (self.order == 4):
         #     # Direct solve w/ quartic equation
